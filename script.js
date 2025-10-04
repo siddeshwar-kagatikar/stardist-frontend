@@ -2,7 +2,8 @@ const uploadBtn = document.getElementById("uploadBtn");
 const imageInput = document.getElementById("imageInput");
 const resultDiv = document.getElementById("result");
 
-const BACKEND_URL = "https://your-backend-name.onrender.com/predict"; 
+const BACKEND_URL = "https://stardist-api.onrender.com/predict";
+
 // 👆 Replace with your actual Render backend URL
 
 uploadBtn.addEventListener("click", async () => {
