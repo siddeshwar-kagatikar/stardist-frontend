@@ -3,6 +3,7 @@ const imageInput = document.getElementById("imageInput");
 const resultDiv = document.getElementById("result");
 
 const BACKEND_URL = "https://stardist-api.onrender.com/predict";
+// const BACKEND_URL = "http://127.0.0.1:8000/predict";
 
 // 👆 Replace with your actual Render backend URL
 

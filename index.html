@@ -1,117 +1,205 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarDist Segmentation</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>StarDist — Synced Zoom & Pan + Reset</title>
+
+  <!-- Panzoom -->
+  <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom/dist/panzoom.min.js"></script>
+
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      margin: 40px;
-      background-color: #f5f5f5;
-    }
-    h1 {
-      color: #333;
-    }
-    #images {
-      display: flex;
-      justify-content: center;
-      gap: 40px;
-      margin-top: 30px;
-      flex-wrap: wrap;
-    }
-    img {
-      width: 300px;
-      height: auto;
-      border-radius: 10px;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-      background-color: #fff;
-      object-fit: contain;
-    }
-    #loading {
-      display: none;
-      font-size: 18px;
-      color: #555;
-      margin-top: 20px;
-    }
-    button {
-      margin-top: 10px;
-      padding: 10px 20px;
-      border: none;
-      background-color: #4caf50;
-      color: white;
-      font-size: 16px;
-      cursor: pointer;
-      border-radius: 5px;
-    }
-    button:hover {
-      background-color: #45a049;
-    }
+    :root { --box-size: 360px; }
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#f6f7fb; margin:28px; text-align:center; color:#111827; }
+    h1 { margin:6px 0 12px; }
+    .controls { margin-bottom:14px; display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; }
+    input[type="file"] { padding:6px; }
+    button { padding:8px 14px; border-radius:8px; border:none; background:#2563eb; color:#fff; cursor:pointer; font-weight:600; transition:background .2s; }
+    button:hover:not(:disabled) { background:#1e4fd6; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    #images { display:flex; gap:28px; justify-content:center; align-items:flex-start; margin-top:18px; flex-wrap:wrap; }
+    .panel { width:var(--box-size); text-align:center; }
+    .panel h3 { margin:8px 0; font-size:14px; color:#374151; }
+    .img-wrapper { width:var(--box-size); height:var(--box-size); border-radius:10px; overflow:hidden; background:#fff; box-shadow:0 6px 18px rgba(15,23,42,0.06); border:1px solid rgba(15,23,42,0.04); display:grid; place-items:center; position:relative; }
+    .img-wrapper img { display:block; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; touch-action:none; cursor:grab; transform-origin:center center; will-change: transform; }
+    .note { margin-top:12px; font-size:13px; color:#6b7280; }
+    #loading { display:none; margin-left:8px; color:#6b7280; }
   </style>
 </head>
 <body>
-  <h1>🧠 StarDist Image Segmentation</h1>
+  <h1>🧠 StarDist — Synced Zoom & Pan + Reset</h1>
 
-  <input type="file" id="fileInput" accept="image/*" />
-  <button onclick="uploadImage()">Segment</button>
-  <p id="loading">⏳ Processing... please wait</p>
+  <div class="controls">
+    <input id="fileInput" type="file" accept="image/*" />
+    <button id="goBtn">Segment</button>
+    <button id="resetBtn" style="background:#10b981;">Reset View</button>
+    <div id="loading">⏳ Processing — please wait...</div>
+  </div>
 
   <div id="images">
-    <div>
+    <div class="panel">
       <h3>Original</h3>
-      <img id="inputImage" src="" alt="Input image will appear here" />
+      <div class="img-wrapper">
+        <img id="inputImage" src="" alt="Original image" />
+      </div>
     </div>
-    <div>
+
+    <div class="panel">
       <h3>Segmented</h3>
-      <img id="maskImage" src="" alt="Segmented mask will appear here" />
+      <div class="img-wrapper">
+        <img id="maskImage" src="" alt="Segmented mask" />
+      </div>
     </div>
   </div>
 
-  <script>
-    async function uploadImage() {
-      const fileInput = document.getElementById("fileInput");
-      const loading = document.getElementById("loading");
-      const inputImage = document.getElementById("inputImage");
-      const maskImage = document.getElementById("maskImage");
+  <p class="note">Use mouse wheel / pinch to zoom, click+drag to pan — both images stay in sync.  
+  Click “Reset View” anytime to restore the full view.</p>
 
-      if (!fileInput.files.length) {
-        alert("Please choose an image first!");
-        return;
+  <script>
+    const BACKEND_URL = "https://stardist-api.onrender.com/predict"; // Change backend URL if needed
+
+    const fileInput = document.getElementById('fileInput');
+    const goBtn = document.getElementById('goBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const loading = document.getElementById('loading');
+    const inputImage = document.getElementById('inputImage');
+    const maskImage = document.getElementById('maskImage');
+
+    let pan1 = null, pan2 = null;
+    let leader = null;
+    let leaderTimeout = null;
+    let lastTransformInput = '';
+    let lastTransformMask = '';
+
+    function makePanzoom(imgEl) {
+      try { if (imgEl._pz && typeof imgEl._pz.destroy === 'function') imgEl._pz.destroy(); } catch(e){}
+      const pz = Panzoom(imgEl, {
+        maxScale: 12,
+        minScale: 0.25,
+        step: 0.2,
+        contain: 'outside'
+      });
+
+      imgEl.parentElement.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        pz.zoomWithWheel(ev);
+        setLeader(imgEl);
+      }, { passive:false });
+
+      imgEl.addEventListener('pointerdown', () => {
+        imgEl.style.cursor = 'grabbing';
+        setLeader(imgEl);
+      });
+      window.addEventListener('pointerup', () => {
+        imgEl.style.cursor = 'grab';
+        if (leaderTimeout) clearTimeout(leaderTimeout);
+        leaderTimeout = setTimeout(() => leader = null, 300);
+      });
+
+      imgEl._pz = pz;
+      return pz;
+    }
+
+    function setLeader(imgEl) {
+      leader = imgEl === inputImage ? 'input' : 'mask';
+      if (leaderTimeout) { clearTimeout(leaderTimeout); leaderTimeout = null; }
+    }
+
+    function getTransform(el) {
+      return window.getComputedStyle(el).transform || 'none';
+    }
+
+    function applyTransform(el, t) {
+      el.style.transform = t === 'none' ? '' : t;
+    }
+
+    function syncLoop() {
+      const t1 = getTransform(inputImage);
+      const t2 = getTransform(maskImage);
+
+      if (leader === 'input') {
+        if (t1 !== lastTransformInput) {
+          applyTransform(maskImage, t1);
+          lastTransformMask = t1;
+        }
+        lastTransformInput = t1;
+      } else if (leader === 'mask') {
+        if (t2 !== lastTransformMask) {
+          applyTransform(inputImage, t2);
+          lastTransformInput = t2;
+        }
+        lastTransformMask = t2;
+      } else {
+        if (t1 !== lastTransformInput && t2 === lastTransformMask) {
+          applyTransform(maskImage, t1);
+          lastTransformInput = t1;
+          lastTransformMask = t1;
+        } else if (t2 !== lastTransformMask && t1 === lastTransformInput) {
+          applyTransform(inputImage, t2);
+          lastTransformMask = t2;
+          lastTransformInput = t2;
+        } else {
+          lastTransformInput = t1;
+          lastTransformMask = t2;
+        }
       }
 
-      // Reset images and show loading
-      maskImage.src = "";
-      loading.style.display = "block";
+      requestAnimationFrame(syncLoop);
+    }
 
-      const file = fileInput.files[0];
-      inputImage.src = URL.createObjectURL(file);
+    function resetTransforms() {
+      inputImage.style.transform = '';
+      maskImage.style.transform = '';
+      lastTransformInput = '';
+      lastTransformMask = '';
+      try { if (inputImage._pz && inputImage._pz.reset) inputImage._pz.reset(); } catch(e){}
+      try { if (maskImage._pz && maskImage._pz.reset) maskImage._pz.reset(); } catch(e){}
+    }
 
-      const formData = new FormData();
-      formData.append("file", file);
+    resetBtn.addEventListener('click', () => resetTransforms());
+
+    window.addEventListener('DOMContentLoaded', () => {
+      pan1 = makePanzoom(inputImage);
+      pan2 = makePanzoom(maskImage);
+      requestAnimationFrame(syncLoop);
+    });
+
+    goBtn.addEventListener('click', async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { alert('Please choose an image first'); return; }
 
       try {
-        const response = await fetch("https://stardist-api.onrender.com/predict", {
-          method: "POST",
-          body: formData,
-        });
+        goBtn.disabled = true;
+        loading.style.display = 'inline';
+        inputImage.src = URL.createObjectURL(f);
+        maskImage.src = '';
+        resetTransforms();
 
-        if (!response.ok) throw new Error("Failed to get mask");
-
-        // Convert response to blob
-        const blob = await response.blob();
-        const maskUrl = URL.createObjectURL(blob);
-
-        // Display segmented image
-        maskImage.src = maskUrl;
-
+        const form = new FormData();
+        form.append('file', f);
+        const res = await fetch(BACKEND_URL, { method:'POST', body: form });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error('Server error ' + res.status + ': ' + txt.slice(0,200));
+        }
+        const blob = await res.blob();
+        maskImage.src = URL.createObjectURL(blob);
       } catch (err) {
-        alert("Error: " + err.message);
+        alert('Error: ' + err.message);
       } finally {
-        // Hide loading spinner
-        loading.style.display = "none";
+        loading.style.display = 'none';
+        goBtn.disabled = false;
       }
-    }
+    });
+
+    inputImage.addEventListener('load', () => {
+      pan1 = makePanzoom(inputImage);
+      setTimeout(resetTransforms, 10);
+    });
+    maskImage.addEventListener('load', () => {
+      pan2 = makePanzoom(maskImage);
+      setTimeout(resetTransforms, 10);
+    });
   </script>
 </body>
 </html>
