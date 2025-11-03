@@ -3,31 +3,88 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>StarDist — Synced Zoom & Pan + Reset</title>
+  <title>StarDist + UNet — Synced Zoom & Pan</title>
 
-  <!-- Panzoom -->
   <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom/dist/panzoom.min.js"></script>
 
   <style>
-    :root { --box-size: 360px; }
-    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#f6f7fb; margin:28px; text-align:center; color:#111827; }
+    :root { --box-size: 340px; }
+    body {
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      background:#f6f7fb;
+      margin:28px;
+      text-align:center;
+      color:#111827;
+    }
     h1 { margin:6px 0 12px; }
-    .controls { margin-bottom:14px; display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; }
+    .controls {
+      margin-bottom:14px;
+      display:flex;
+      gap:8px;
+      justify-content:center;
+      align-items:center;
+      flex-wrap:wrap;
+    }
     input[type="file"] { padding:6px; }
-    button { padding:8px 14px; border-radius:8px; border:none; background:#2563eb; color:#fff; cursor:pointer; font-weight:600; transition:background .2s; }
+    button {
+      padding:8px 14px;
+      border-radius:8px;
+      border:none;
+      background:#2563eb;
+      color:#fff;
+      cursor:pointer;
+      font-weight:600;
+      transition:background .2s;
+    }
     button:hover:not(:disabled) { background:#1e4fd6; }
     button:disabled { opacity:.6; cursor:not-allowed; }
-    #images { display:flex; gap:28px; justify-content:center; align-items:flex-start; margin-top:18px; flex-wrap:wrap; }
-    .panel { width:var(--box-size); text-align:center; }
-    .panel h3 { margin:8px 0; font-size:14px; color:#374151; }
-    .img-wrapper { width:var(--box-size); height:var(--box-size); border-radius:10px; overflow:hidden; background:#fff; box-shadow:0 6px 18px rgba(15,23,42,0.06); border:1px solid rgba(15,23,42,0.04); display:grid; place-items:center; position:relative; }
-    .img-wrapper img { display:block; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; touch-action:none; cursor:grab; transform-origin:center center; will-change: transform; }
+    #images {
+      display:flex;
+      gap:22px;
+      justify-content:center;
+      align-items:flex-start;
+      margin-top:18px;
+      flex-wrap:wrap;
+    }
+    .panel {
+      width:var(--box-size);
+      text-align:center;
+    }
+    .panel h3 {
+      margin:8px 0;
+      font-size:14px;
+      color:#374151;
+    }
+    .img-wrapper {
+      width:var(--box-size);
+      height:var(--box-size);
+      border-radius:10px;
+      overflow:hidden;
+      background:#fff;
+      box-shadow:0 6px 18px rgba(15,23,42,0.06);
+      border:1px solid rgba(15,23,42,0.04);
+      display:grid;
+      place-items:center;
+      position:relative;
+    }
+    .img-wrapper img {
+      display:block;
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      user-select:none;
+      -webkit-user-drag:none;
+      touch-action:none;
+      cursor:grab;
+      transform-origin:center center;
+      will-change: transform;
+    }
     .note { margin-top:12px; font-size:13px; color:#6b7280; }
     #loading { display:none; margin-left:8px; color:#6b7280; }
   </style>
 </head>
 <body>
-  <h1>🧠 StarDist — Synced Zoom & Pan + Reset</h1>
+  <h1>🧠 StarDist + UNet — Synced Zoom & Pan + Reset</h1>
 
   <div class="controls">
     <input id="fileInput" type="file" accept="image/*" />
@@ -45,31 +102,40 @@
     </div>
 
     <div class="panel">
-      <h3>Segmented</h3>
+      <h3>StarDist Mask</h3>
       <div class="img-wrapper">
-        <img id="maskImage" src="" alt="Segmented mask" />
+        <img id="maskStar" src="" alt="StarDist mask" />
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>U-Net Mask</h3>
+      <div class="img-wrapper">
+        <img id="maskUnet" src="" alt="U-Net mask" />
       </div>
     </div>
   </div>
 
-  <p class="note">Use mouse wheel / pinch to zoom, click+drag to pan — both images stay in sync.  
-  Click “Reset View” anytime to restore the full view.</p>
+  <p class="note">
+    Use mouse wheel / pinch to zoom, click+drag to pan — all images stay in sync.<br>
+    Click “Reset View” anytime to restore the full view.
+  </p>
 
   <script>
-    const BACKEND_URL = "https://stardist-api.onrender.com/predict"; // Change backend URL if needed
+    const BACKEND_URL = "https://stardist-api.onrender.com/predict"; // update if needed
 
     const fileInput = document.getElementById('fileInput');
     const goBtn = document.getElementById('goBtn');
     const resetBtn = document.getElementById('resetBtn');
     const loading = document.getElementById('loading');
     const inputImage = document.getElementById('inputImage');
-    const maskImage = document.getElementById('maskImage');
+    const maskStar = document.getElementById('maskStar');
+    const maskUnet = document.getElementById('maskUnet');
 
-    let pan1 = null, pan2 = null;
+    const allImgs = [inputImage, maskStar, maskUnet];
     let leader = null;
-    let leaderTimeout = null;
-    let lastTransformInput = '';
-    let lastTransformMask = '';
+    let lastTransforms = new Map();
+    let pans = new Map();
 
     function makePanzoom(imgEl) {
       try { if (imgEl._pz && typeof imgEl._pz.destroy === 'function') imgEl._pz.destroy(); } catch(e){}
@@ -83,26 +149,13 @@
       imgEl.parentElement.addEventListener('wheel', (ev) => {
         ev.preventDefault();
         pz.zoomWithWheel(ev);
-        setLeader(imgEl);
+        leader = imgEl;
       }, { passive:false });
 
-      imgEl.addEventListener('pointerdown', () => {
-        imgEl.style.cursor = 'grabbing';
-        setLeader(imgEl);
-      });
-      window.addEventListener('pointerup', () => {
-        imgEl.style.cursor = 'grab';
-        if (leaderTimeout) clearTimeout(leaderTimeout);
-        leaderTimeout = setTimeout(() => leader = null, 300);
-      });
-
+      imgEl.addEventListener('pointerdown', () => { leader = imgEl; });
       imgEl._pz = pz;
+      pans.set(imgEl, pz);
       return pz;
-    }
-
-    function setLeader(imgEl) {
-      leader = imgEl === inputImage ? 'input' : 'mask';
-      if (leaderTimeout) { clearTimeout(leaderTimeout); leaderTimeout = null; }
     }
 
     function getTransform(el) {
@@ -114,53 +167,34 @@
     }
 
     function syncLoop() {
-      const t1 = getTransform(inputImage);
-      const t2 = getTransform(maskImage);
-
-      if (leader === 'input') {
-        if (t1 !== lastTransformInput) {
-          applyTransform(maskImage, t1);
-          lastTransformMask = t1;
+      if (leader) {
+        const tLead = getTransform(leader);
+        for (const img of allImgs) {
+          if (img !== leader && lastTransforms.get(img) !== tLead) {
+            applyTransform(img, tLead);
+            lastTransforms.set(img, tLead);
+          }
         }
-        lastTransformInput = t1;
-      } else if (leader === 'mask') {
-        if (t2 !== lastTransformMask) {
-          applyTransform(inputImage, t2);
-          lastTransformInput = t2;
-        }
-        lastTransformMask = t2;
       } else {
-        if (t1 !== lastTransformInput && t2 === lastTransformMask) {
-          applyTransform(maskImage, t1);
-          lastTransformInput = t1;
-          lastTransformMask = t1;
-        } else if (t2 !== lastTransformMask && t1 === lastTransformInput) {
-          applyTransform(inputImage, t2);
-          lastTransformMask = t2;
-          lastTransformInput = t2;
-        } else {
-          lastTransformInput = t1;
-          lastTransformMask = t2;
+        for (const img of allImgs) {
+          lastTransforms.set(img, getTransform(img));
         }
       }
-
       requestAnimationFrame(syncLoop);
     }
 
     function resetTransforms() {
-      inputImage.style.transform = '';
-      maskImage.style.transform = '';
-      lastTransformInput = '';
-      lastTransformMask = '';
-      try { if (inputImage._pz && inputImage._pz.reset) inputImage._pz.reset(); } catch(e){}
-      try { if (maskImage._pz && maskImage._pz.reset) maskImage._pz.reset(); } catch(e){}
+      for (const img of allImgs) {
+        img.style.transform = '';
+        if (img._pz && img._pz.reset) img._pz.reset();
+      }
+      lastTransforms.clear();
     }
 
-    resetBtn.addEventListener('click', () => resetTransforms());
+    resetBtn.addEventListener('click', resetTransforms);
 
     window.addEventListener('DOMContentLoaded', () => {
-      pan1 = makePanzoom(inputImage);
-      pan2 = makePanzoom(maskImage);
+      for (const img of allImgs) makePanzoom(img);
       requestAnimationFrame(syncLoop);
     });
 
@@ -172,7 +206,8 @@
         goBtn.disabled = true;
         loading.style.display = 'inline';
         inputImage.src = URL.createObjectURL(f);
-        maskImage.src = '';
+        maskStar.src = '';
+        maskUnet.src = '';
         resetTransforms();
 
         const form = new FormData();
@@ -182,8 +217,14 @@
           const txt = await res.text();
           throw new Error('Server error ' + res.status + ': ' + txt.slice(0,200));
         }
-        const blob = await res.blob();
-        maskImage.src = URL.createObjectURL(blob);
+
+        // Expect JSON containing base64 URLs
+        const data = await res.json();
+
+        // Your backend returns data:image/png;base64,... strings for both masks
+        maskStar.src = data.stardist_mask;
+        maskUnet.src = data.unet_mask;
+
       } catch (err) {
         alert('Error: ' + err.message);
       } finally {
@@ -192,14 +233,9 @@
       }
     });
 
-    inputImage.addEventListener('load', () => {
-      pan1 = makePanzoom(inputImage);
-      setTimeout(resetTransforms, 10);
-    });
-    maskImage.addEventListener('load', () => {
-      pan2 = makePanzoom(maskImage);
-      setTimeout(resetTransforms, 10);
-    });
+    for (const img of allImgs) {
+      img.addEventListener('load', () => makePanzoom(img));
+    }
   </script>
 </body>
 </html>

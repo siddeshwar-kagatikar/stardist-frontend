@@ -5,8 +5,6 @@ const resultDiv = document.getElementById("result");
 const BACKEND_URL = "https://stardist-api.onrender.com/predict";
 // const BACKEND_URL = "http://127.0.0.1:8000/predict";
 
-// 👆 Replace with your actual Render backend URL
-
 uploadBtn.addEventListener("click", async () => {
   const file = imageInput.files[0];
   if (!file) {
@@ -28,15 +26,25 @@ uploadBtn.addEventListener("click", async () => {
 
     if (!response.ok) throw new Error("Server error: " + response.status);
 
-    // Expecting the backend to return the image (mask) as bytes
-    const blob = await response.blob();
-    const imageUrl = URL.createObjectURL(blob);
+    // ✅ Parse JSON (backend returns both masks)
+    const data = await response.json();
 
+    // data.stardist_mask and data.unet_mask are base64 strings
     resultDiv.innerHTML = `
-      <h3>Original Image:</h3>
-      <img id="preview" src="${URL.createObjectURL(file)}" alt="Original" />
-      <h3>Segmented Output:</h3>
-      <img id="output" src="${imageUrl}" alt="Result" />
+      <div style="display:flex; gap:20px; justify-content:center; flex-wrap:wrap;">
+        <div>
+          <h3>Original Image</h3>
+          <img src="${URL.createObjectURL(file)}" alt="Original" width="300"/>
+        </div>
+        <div>
+          <h3>StarDist Output</h3>
+          <img src="${data.stardist_mask}" alt="StarDist" width="300"/>
+        </div>
+        <div>
+          <h3>U-Net Output</h3>
+          <img src="${data.unet_mask}" alt="UNet" width="300"/>
+        </div>
+      </div>
     `;
   } catch (err) {
     resultDiv.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
